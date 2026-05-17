@@ -1,0 +1,290 @@
+SELECT * FROM PRODUCT_TABLE;
+
+-- FOR COVERTING INTO DATE TYPE
+SELECT `INVOICE DATE`, STR_TO_DATE(`INVOICE DATE`, '%m/%d/%Y') AS FIXED_DATE FROM product_table;
+
+-- CREATE A CLEAN COLUMN
+ALTER TABLE PRODUCT_TABLE
+ADD COLUMN INVOICE_DATE_CLEAN DATE;
+
+-- UPDATE IT
+UPDATE PRODUCT_TABLE
+SET INVOICE_DATE_CLEAN= STR_TO_DATE(`INVOICE DATE`, '%m/%d/%Y');
+
+-- CALCULATE TOTAL AMOUNT PER TRANSACTION --
+
+SELECT `CUSTOMER ID`,
+        `INVOICE DATE`,
+        QUANTITY * PRICE AS AMOUNT
+        FROM product_table
+        WHERE STATUS= 'PAID';
+        
+-- AGGREGATE CUSTOMER TO LEVEL--
+
+SELECT `CUSTOMER ID`,
+MAX(`INVOICE DATE`) AS LAST_PURCHASE_DATE,
+COUNT(*) AS FREQUENCY,
+SUM(QUANTITY * PRICE) AS MONETARY
+FROM product_table
+WHERE STATUS= 'PAID'
+GROUP BY `CUSTOMER ID`;
+
+-- CALCULATE RECENCY
+
+SELECT `CUSTOMER ID`,
+datediff(CURDATE(), MAX(`INVOICE_DATE_CLEAN`)) AS RECENCY,
+COUNT(*) AS FREQUENCY,
+SUM(QUANTITY * PRICE) AS MONETARY
+FROM product_table
+WHERE STATUS = 'PAID'
+GROUP BY `Customer Id`;
+
+-- CREATE RFM TABLE 
+WITH RFM_BASE AS 
+(
+SELECT `CUSTOMER ID`,
+datediff(CURDATE(), MAX(`INVOICE_DATE_CLEAN`)) AS RECENCY,
+COUNT(*) AS FREQUENCY,
+SUM(QUANTITY * PRICE) AS MONETARY
+FROM product_table
+WHERE STATUS = 'PAID'
+GROUP BY `Customer Id`
+)
+SELECT * FROM RFM_BASE;
+
+-- ASSIGN RFM SCORES 
+WITH RFM_BASE AS 
+(
+SELECT `CUSTOMER ID`,
+datediff(CURDATE(), MAX(`INVOICE_DATE_CLEAN`)) AS RECENCY,
+COUNT(*) AS FREQUENCY,
+SUM(QUANTITY * PRICE) AS MONETARY
+FROM product_table
+WHERE STATUS = 'PAID'
+GROUP BY `Customer Id`
+),
+RFM_SCORES AS (
+SELECT `CUSTOMER ID`,
+		NTILE(5) OVER (ORDER BY RECENCY DESC) AS R_SCORE,
+        NTILE(5) OVER (ORDER BY FREQUENCY ASC) AS F_SCORE,
+        NTILE(5) OVER (ORDER BY MONETARY DESC) AS M_SCORE
+        FROM RFM_BASE )
+SELECT * FROM RFM_SCORES;
+
+-- CREATE RFM SEGMENT CODE
+WITH RFM_BASE AS 
+(
+SELECT `CUSTOMER ID`,
+datediff(CURDATE(), MAX(`INVOICE_DATE_CLEAN`)) AS RECENCY,
+COUNT(*) AS FREQUENCY,
+SUM(QUANTITY * PRICE) AS MONETARY
+FROM product_table
+WHERE STATUS = 'PAID'
+GROUP BY `Customer Id`
+),
+RFM_SCORES AS (
+SELECT `CUSTOMER ID`,
+		NTILE(5) OVER (ORDER BY RECENCY DESC) AS R_SCORE,
+        NTILE(5) OVER (ORDER BY FREQUENCY ASC) AS F_SCORE,
+        NTILE(5) OVER (ORDER BY MONETARY DESC) AS M_SCORE
+        FROM RFM_BASE 
+        )
+SELECT `CUSTOMER ID`,
+        R_SCORE,
+        F_SCORE,
+        M_SCORE,
+        CONCAT(R_SCORE, F_SCORE, M_SCORE) AS RFM_SEGMENT 
+        FROM RFM_SCORES;
+        
+-- LABEL CUSTOMER SEGMENTS
+WITH RFM_BASE AS 
+(
+SELECT `CUSTOMER ID`,
+datediff(CURDATE(), MAX(`INVOICE_DATE_CLEAN`)) AS RECENCY,
+COUNT(*) AS FREQUENCY,
+SUM(QUANTITY * PRICE) AS MONETARY
+FROM product_table
+WHERE STATUS = 'PAID'
+GROUP BY `Customer Id`
+),
+RFM_SCORES AS (
+SELECT `CUSTOMER ID`,
+		NTILE(5) OVER (ORDER BY RECENCY DESC) AS R_SCORE,
+        NTILE(5) OVER (ORDER BY FREQUENCY ASC) AS F_SCORE,
+        NTILE(5) OVER (ORDER BY MONETARY DESC) AS M_SCORE
+        FROM RFM_BASE )
+SELECT `customer id`,
+CASE WHEN R_SCORE = 5 AND F_SCORE=5 AND M_SCORE=5 THEN 'BEST_CUSTOMERS'
+     WHEN R_SCORE >=4 AND F_SCORE>=4 THEN 'LOYAL_CUSTOMERS'
+     WHEN R_SCORE = 5 AND F_SCORE<=2  THEN 'NEW_CUSTOMERS'
+     WHEN R_SCORE <=2 AND F_SCORE>=4 THEN 'AT_RISK'
+     WHEN R_SCORE <=2 AND F_SCORE<=2 THEN 'LOST_CUSTOMERS'
+     ELSE 'AVERAGE_CUSTOMERS'
+     END AS SEGMENT
+     FROM RFM_SCORES
+     ;
+     
+     
+-- loyal customers based on country
+     WITH RFM_BASE AS 
+(
+SELECT p.`CUSTOMER ID`as customer_id, c.country as country,
+datediff(CURDATE(), MAX(`INVOICE_DATE_CLEAN`)) AS RECENCY,
+COUNT(*) AS FREQUENCY,
+SUM(QUANTITY * PRICE) AS MONETARY
+FROM product_table p
+join customer_data c
+on p.`customer id`= c.ï»¿Customer_Id
+WHERE STATUS = 'PAID'
+GROUP BY `Customer_Id`, country
+),
+RFM_SCORES AS (
+SELECT *,
+		NTILE(5) OVER (ORDER BY RECENCY DESC) AS R_SCORE,
+        NTILE(5) OVER (ORDER BY FREQUENCY ASC) AS F_SCORE,
+        NTILE(5) OVER (ORDER BY MONETARY DESC) AS M_SCORE
+        FROM RFM_BASE ),
+rfm_segment as (
+SELECT *,
+CASE WHEN R_SCORE = 5 AND F_SCORE=5 AND M_SCORE=5 THEN 'BEST_CUSTOMERS'
+     WHEN R_SCORE >=4 AND F_SCORE>=4 THEN 'LOYAL_CUSTOMERS'
+     WHEN R_SCORE = 5 AND F_SCORE<=2  THEN 'NEW_CUSTOMERS'
+     WHEN R_SCORE <=2 AND F_SCORE>=4 THEN 'AT_RISK'
+     WHEN R_SCORE <=2 AND F_SCORE<=2 THEN 'LOST_CUSTOMERS'
+     ELSE 'AVERAGE_CUSTOMERS'
+     END AS SEGMENT
+     FROM RFM_SCORES
+     )
+select country, count(*) as customer_count
+ from rfm_segment
+ where segment = 'loyal_customers'
+ group by country
+ order by customer_count desc;
+     
+   
+   
+   
+-- country by each segment   
+     WITH RFM_BASE AS 
+(
+SELECT p.`CUSTOMER ID`as customer_id, c.country as country,
+datediff(CURDATE(), MAX(`INVOICE_DATE_CLEAN`)) AS RECENCY,
+COUNT(*) AS FREQUENCY,
+SUM(QUANTITY * PRICE) AS MONETARY
+FROM product_table p
+join customer_data c
+on p.`customer id`= c.ï»¿Customer_Id
+WHERE STATUS = 'PAID'
+GROUP BY `Customer_Id`, country
+),
+RFM_SCORES AS (
+SELECT *,
+		NTILE(5) OVER (ORDER BY RECENCY DESC) AS R_SCORE,
+        NTILE(5) OVER (ORDER BY FREQUENCY ASC) AS F_SCORE,
+        NTILE(5) OVER (ORDER BY MONETARY DESC) AS M_SCORE
+        FROM RFM_BASE ),
+rfm_segment as (
+SELECT *,
+CASE WHEN R_SCORE = 5 AND F_SCORE=5 AND M_SCORE=5 THEN 'BEST_CUSTOMERS'
+     WHEN R_SCORE >=4 AND F_SCORE>=4 THEN 'LOYAL_CUSTOMERS'
+     WHEN R_SCORE = 5 AND F_SCORE<=2  THEN 'NEW_CUSTOMERS'
+     WHEN R_SCORE <=2 AND F_SCORE>=4 THEN 'AT_RISK'
+     WHEN R_SCORE <=2 AND F_SCORE<=2 THEN 'LOST_CUSTOMERS'
+     ELSE 'AVERAGE_CUSTOMERS'
+     END AS SEGMENT
+     FROM RFM_SCORES
+     )
+select country, 
+sum(case when segment = 'loyal_customers' then 1 else 0 end) as loyal,
+sum(case when segment = 'at_risk' then 1 else 0 end ) as at_risk,
+sum(case when segment = 'lost_customers' then 1 else 0 end ) as lost,
+sum(case when segment = 'average_customers' then 1 else 0 end ) as average
+ from rfm_segment
+ group by country
+ ;
+
+
+
+-- top revenue generating country per segment        
+        WITH RFM_BASE AS 
+(
+SELECT p.`CUSTOMER ID`as customer_id, c.country as country,
+datediff(CURDATE(), MAX(`INVOICE_DATE_CLEAN`)) AS RECENCY,
+COUNT(*) AS FREQUENCY,
+SUM(QUANTITY * PRICE) AS MONETARY
+FROM product_table p
+join customer_data c
+on p.`customer id`= c.ï»¿Customer_Id
+WHERE STATUS = 'PAID'
+GROUP BY `Customer_Id`, country
+),
+RFM_SCORES AS (
+SELECT *,
+		NTILE(5) OVER (ORDER BY RECENCY DESC) AS R_SCORE,
+        NTILE(5) OVER (ORDER BY FREQUENCY ASC) AS F_SCORE,
+        NTILE(5) OVER (ORDER BY MONETARY DESC) AS M_SCORE
+        FROM RFM_BASE ),
+rfm_segment as (
+SELECT *,
+CASE WHEN R_SCORE = 5 AND F_SCORE=5 AND M_SCORE=5 THEN 'BEST_CUSTOMERS'
+     WHEN R_SCORE >=4 AND F_SCORE>=4 THEN 'LOYAL_CUSTOMERS'
+     WHEN R_SCORE = 5 AND F_SCORE<=2  THEN 'NEW_CUSTOMERS'
+     WHEN R_SCORE <=2 AND F_SCORE>=4 THEN 'AT_RISK'
+     WHEN R_SCORE <=2 AND F_SCORE<=2 THEN 'LOST_CUSTOMERS'
+     ELSE 'AVERAGE_CUSTOMERS'
+     END AS SEGMENT
+     FROM RFM_SCORES
+     )
+select * 
+from( 
+  select country, segment, sum(monetary) as revenue,
+  rank() over(partition by segment order by sum(monetary) desc) as rnk
+  from rfm_segment
+  group by country, segment  )t
+  where rnk = 1;
+
+-- revenue by country & segment 
+     WITH RFM_BASE AS 
+(
+SELECT p.`CUSTOMER ID`as customer_id, c.country as country,
+datediff(CURDATE(), MAX(`INVOICE_DATE_CLEAN`)) AS RECENCY,
+COUNT(*) AS FREQUENCY,
+SUM(QUANTITY * PRICE) AS MONETARY
+FROM product_table p
+join customer_data c
+on p.`customer id`= c.ï»¿Customer_Id
+WHERE STATUS = 'PAID'
+GROUP BY `Customer_Id`, country
+),
+RFM_SCORES AS (
+SELECT *,
+		NTILE(5) OVER (ORDER BY RECENCY DESC) AS R_SCORE,
+        NTILE(5) OVER (ORDER BY FREQUENCY ASC) AS F_SCORE,
+        NTILE(5) OVER (ORDER BY MONETARY DESC) AS M_SCORE
+        FROM RFM_BASE ),
+rfm_segment as (
+SELECT *,
+CASE WHEN R_SCORE = 5 AND F_SCORE=5 AND M_SCORE=5 THEN 'BEST_CUSTOMERS'
+     WHEN R_SCORE >=4 AND F_SCORE>=4 THEN 'LOYAL_CUSTOMERS'
+     WHEN R_SCORE = 5 AND F_SCORE<=2  THEN 'NEW_CUSTOMERS'
+     WHEN R_SCORE <=2 AND F_SCORE>=4 THEN 'AT_RISK'
+     WHEN R_SCORE <=2 AND F_SCORE<=2 THEN 'LOST_CUSTOMERS'
+     ELSE 'AVERAGE_CUSTOMERS'
+     END AS SEGMENT
+     FROM RFM_SCORES
+     )
+select country, segment,
+sum(monetary) as total_revenue
+from rfm_segment
+ group by country, segment
+ order by total_revenue desc limit 10
+ ;
+
+
+
+
+     
+        
+
+
+
